@@ -1,26 +1,36 @@
 """ Machine Learning on Data Without Preliminary Cleaning """
-
 import os
+import datetime
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.utils.data as Data
 import mdshare
 import numpy as np
 from sklearn.model_selection import train_test_split
-
 import matplotlib.pyplot as plt
-
 import torchvision
 from torch.utils.tensorboard import SummaryWriter
 
-writer = SummaryWriter('runs/tmp_1')
+#BATCH_SIZE = len(x_train) # pełen zbiór
+BATCH_SIZE = 1000
+#BATCH_SIZE = 45
+#EPOCHS = 50
+EPOCHS = 10
+
+writer = SummaryWriter(
+    'runs/%s; %d; %d' \
+    % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+       BATCH_SIZE, EPOCHS)
+    )
 
 def matplotlib_imshow(img):
     """ using plt to plot img in tensorboard """
-    img = img.mean(dim=0)
     npimg = img.cpu().detach().numpy()
-    plt.imshow(npimg, cmap="Greys")
+    npimg = npimg.transpose(1, 2, 0)
+
+    plt.imshow(npimg.astype('uint8'))
+    plt.close()
+
 
 os.system("clear")
 # pylint: disable=E1101
@@ -30,23 +40,19 @@ DATA = mdshare.fetch("alanine-dipeptide-3x250ns-heavy-atom-distances.npz")
 with np.load(DATA) as f:
     dataset = np.vstack([f[key] for key in sorted(f.keys())])
 
+
 x_train, x_test = train_test_split(dataset, train_size=0.7)
 
-BATCH_SIZE = 1000
-BATCH_PART = 20
-EPOCHS = 15
 
 # Data loader for easy mini-batch return in training
 train_loader = Data.DataLoader(
     dataset=x_train,
     batch_size=BATCH_SIZE,
-    shuffle=True
-    )
+    shuffle=True)
 test_loader = Data.DataLoader(
     dataset=x_test,
     batch_size=BATCH_SIZE,
-    shuffle=True
-    )
+    shuffle=True)
 
 
 class AutoEncoder(nn.Module):
@@ -61,10 +67,8 @@ class AutoEncoder(nn.Module):
         """
         initializing autoencoder class
         """
-        super(AutoEncoder, self).__init__()
-
-        # self.X = torch.from_numpy(x).type(torch.FloatTensor)
-        # self.y = y
+        #super(AutoEncoder, self).__init__()    # this is the old way
+        super().__init__()                      # this is Python3 way
 
         self.input_layer = nn.Linear(45, 20)
         self.encode_1 = nn.Linear(20, 10)
@@ -75,6 +79,8 @@ class AutoEncoder(nn.Module):
         self.decode_2 = nn.Linear(5, 10)
         self.decode_3 = nn.Linear(10, 20)
         self.output_layer = nn.Linear(20, 45)
+
+        self.running_loss = 0.0
 
         self.input = None
 
@@ -95,41 +101,33 @@ class AutoEncoder(nn.Module):
         """
         encoding function
         """
+        x = torch.tanh(self.input_layer(x))
+        x = torch.tanh(self.encode_1(x))
+        x = torch.tanh(self.encode_2(x))
 
-        x = F.relu(self.input_layer(x))
-        x = F.relu(self.encode_1(x))
-        x = F.relu(self.encode_2(x))
-
-        return F.relu(self.encode_3(x))
+        return torch.tanh(self.encode_3(x))
 
     def decode(self, z):
         """
         decoding function
         """
+        z = torch.tanh(self.decode_1(z))
+        z = torch.tanh(self.decode_2(z))
+        z = torch.tanh(self.decode_3(z))
 
-        z = F.relu(self.decode_1(z))
-        z = F.relu(self.decode_2(z))
-        z = F.relu(self.decode_3(z))
-
-        return F.relu(self.output_layer(z))
+        return torch.tanh(self.output_layer(z))
 
     def trainIters(self, mod, optim):
         """
         training iterations method
         """
         def train_step(x):
-            mod.train()
-            predict = mod(x)
-
             optim.zero_grad()
-
+            predict = mod(x)
             los = self.lossfunction()
-            los = los(self.input, predict)
-
+            los = los(predict, self.input)
             los.backward()
-
             optim.step()
-
             return los.item()
 
         return train_step
@@ -137,7 +135,7 @@ class AutoEncoder(nn.Module):
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = AutoEncoder().to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-7)
 criterion = torch.nn.MSELoss()
 
 # train = model.trainIters(model, optimizer)
@@ -146,11 +144,14 @@ losses = []
 # Set model into train mode
 model.train()
 
-# train
+# Display info about train
+print("### STARTING TRAINING ###")
+
+# start training
 for epoch in range(EPOCHS):
     batch_loss = 0.0
+
     for batch_idx, data in enumerate(train_loader):
-        # print(f'Epoch: {epoch} batch_idx: {batch_idx}')
         data = data.to(device)
         output = model(data)
         loss = criterion(output, data)
@@ -158,27 +159,48 @@ for epoch in range(EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    print('epoch: {}\t'.format(epoch + 1) \
-        + 'avg loss: {:.5f}\t'.format(batch_loss / 525) \
-        + 'loss: {:.5f}\t'.format(batch_loss))
+        writer.add_scalar('train/Batch loss', loss, batch_idx)
 
+    writer.add_scalar('train/Epoch loss', batch_loss, epoch)
+
+    print('epoch: {}\t'.format(epoch + 1) \
+        + 'avg loss: {:.10f}\t'.format(batch_loss / BATCH_SIZE) \
+        + 'epoch loss: {:.5f}\t'.format(batch_loss))
 
 
 # Set model into evaluation mode
 model.eval()
+
+# Display info about test
+print("### STARTING TESTING ###")
+
+batch_loss = 0.0
 for batch_idx, data in enumerate(test_loader):
+    if batch_idx == 0:
+        writer.add_graph(model, data)
     data = data.to(device)
     output = model(data)
-    #print(f'Data {data} \nOutput {output}')
 
-    #dataiter = iter(data)
-    #input_img = dataiter.next()
     img_input_grid = torchvision.utils.make_grid(data)
     matplotlib_imshow(img_input_grid)
     writer.add_image('input_data', img_input_grid, batch_idx)
-    print(data[0:10])
+    writer.add_embedding(data, tag='input_data', global_step=batch_idx)
 
     img_output_grid = torchvision.utils.make_grid(output)
     matplotlib_imshow(img_output_grid)
     writer.add_image('output_data', img_output_grid, batch_idx)
-    print(output[0:10])
+    writer.add_embedding(output, tag='output_data', global_step=batch_idx)
+
+    enc = model.encode(data)
+    img_encode_grid = torchvision.utils.make_grid(enc)
+    matplotlib_imshow(img_encode_grid)
+    writer.add_image('encoded_data', img_encode_grid, batch_idx)
+    writer.add_embedding(enc, tag='encoded_data', global_step=batch_idx)
+
+    loss = criterion(output, data)
+    batch_loss += loss
+    writer.add_scalar('test/Batch loss', loss, batch_idx)
+
+
+print('avg loss: {:.5f}\t'.format(batch_loss / BATCH_SIZE) \
+    + 'test loss: {:.5f}\t'.format(batch_loss))
