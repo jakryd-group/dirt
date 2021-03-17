@@ -4,3 +4,10 @@
 *.0
 *.tsv
 *.pbtxt
+*.pyc
+__pycache__/*.*
+*.png
+*.gz
+torch_datasets/MNIST/raw/*
+runs/*
+*.pt
