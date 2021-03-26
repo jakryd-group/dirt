@@ -33,8 +33,6 @@ class AutoEncoder(nn.Module):
         self.decode_3 = nn.Linear(quarter, half)
         self.output_layer = nn.Linear(half, input_shape)
 
-        # FIXME: self.running_loss = 0.0
-
         self.input = None
 
     def forward(self, x):

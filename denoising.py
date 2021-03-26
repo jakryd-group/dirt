@@ -2,8 +2,6 @@
 Próba wykorzystania klasy AutEncoder do odszumienia MNIST
 """
 import datetime
-from os import write
-import random
 import torchvision
 from torchvision import transforms
 from torchvision.utils import make_grid
@@ -11,22 +9,22 @@ import torch
 from torch.utils.data import random_split
 from tensorboardX import SummaryWriter
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 from base import AutoEncoder
-import copy
-import numpy as np
-from PIL import Image
 
-def add_noise(image):
+
+def add_noise(image, noise=0.2, normalize=True):
     """
     dodajemy szum do obrazów w celu uczenia
     """
-    noise = torch.randn(image.size()) * 0.2
+    noise = torch.randn(image.size()) * noise
     noisy_img = image + noise
-    noisy_img = noisy_img/torch.max(noisy_img)
+    if normalize:
+        noisy_img = noisy_img / torch.max(noisy_img)
     return noisy_img
 
 
-transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
+transform = transforms.Compose([transforms.ToTensor()])
 
 train_dataset = torchvision.datasets.MNIST(
     root="torch_datasets/", train=True, transform=transform)
@@ -36,7 +34,8 @@ train_set, test_set = random_split(train_dataset, (48000, 12000))
 
 BATCH_SIZE = 1000
 BATCH_TEST_SIZE = 1000
-EPOCHS = 100
+EPOCHS = 50
+NOISE_RATIO = [0.0, 0.05, 0.2, 0.5, 1.0]
 
 train_loader = torch.utils.data.DataLoader(
     train_set, batch_size=BATCH_SIZE, shuffle=True)
@@ -50,10 +49,7 @@ writer = SummaryWriter(
     % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S dn"), BATCH_SIZE, EPOCHS))
 
 
-#plt.imshow(train_set[0][0].reshape((28,28)), cmap='Greys')
-#plt.show()
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 AEmodel = AutoEncoder(input_shape=784, encoded_shape=10).to(device)
 optimizer = torch.optim.Adam(AEmodel.parameters(), lr=0.001, weight_decay=1e-7)
 criterion = torch.nn.MSELoss()
@@ -67,53 +63,67 @@ def train(model, data_train, optim, loss_fn, epochs):
     for epoch in range(epochs):
         loss = 0
         for inputs, _ in data_train:
-            #reshape inputs
+            # reshape inputs
             inputs = inputs.view(-1, 784)
-            #add some noise
+            # add some noise
             noise_img_train = add_noise(inputs)
-            #reser gradients
+            # reset gradients
             optim.zero_grad()
-            #compute reconstructions
-            outputs = model(noise_img_train)
-            #compute a training reconstruction loss
-            train_loss = loss_fn(outputs, inputs)
-            #compute accumulated gradients
+            # move model (ie. net) to appropiate device
+            model.to(device)
+            # compute reconstructions
+            outputs = model(noise_img_train.to(device))
+            # compute a training reconstruction loss
+            train_loss = loss_fn(outputs.to(device), inputs.to(device))
+            # compute accumulated gradients
             train_loss.backward()
-            #update parameters based on current gradients
+            # update parameters based on current gradients
             optim.step()
-            #add the batch training loss to epoch loss
+            #a dd the batch training loss to epoch loss
             loss += train_loss.item()
-        #compute the epoch training loss
+        # compute the epoch training loss
         loss = loss/len(data_train)
+        # loss = loss/len(NOISE_RATIO)
         loss_list_result.append(loss)
-        #print info every 10th epoch
+        # print info every 10th epoch
         if epoch%10 == 0:
             print('Epoch {} of {}, loss={:.3}'.format(epoch+1, epochs, loss))
         writer.add_scalar('train/Epoch loss', loss, epoch)
+
+        for name, weight in model.named_parameters():
+            writer.add_histogram(name,weight, epoch)
+            writer.add_histogram(f'{name}.grad',weight.grad, epoch)
+
+        writer.flush()
     return loss_list_result
 
 
 loss_list = train(AEmodel, train_loader, optimizer, criterion, EPOCHS)
 
-
 counter = 0
 
-for img, _ in test_loader:
-    noise = add_noise(img)
-    noise = noise.view(-1, 784)
-    out = AEmodel(noise)
-    out = out/out.max().item()
-    out = out.detach().cpu()
+for ratios in NOISE_RATIO:
+    for img, _ in test_loader:
+        img = img.view(-1, 784)
+        noise_img = add_noise(img, noise=ratios)
 
-    img = img.view(-1, 784)
-    img = torch.chunk(img, BATCH_TEST_SIZE)
-    noise = torch.chunk(noise, BATCH_TEST_SIZE)
-    out = torch.chunk(out, BATCH_TEST_SIZE)
+        if counter == 0:
+            writer.add_graph(AEmodel, noise_img.to(device))
 
-    #torch.cat((img.view(28, 28), noise.view(28, 28), out.view(28, 28)), 1),
-    grid = torchvision.utils.make_grid(
-        torch.cat((img[0].view(28, 28), noise[0].view(28, 28), out[0].view(28, 28)), 1),
-        nrow=3,
-        padding=100)
-    writer.add_image('test_model', grid, counter)
-    counter = counter + 1
+        out = AEmodel(noise_img.to(device))
+        out = out/out.max().item()
+        out = out.detach().cpu()
+
+        img = torch.chunk(img, BATCH_TEST_SIZE)
+        noise_img = torch.chunk(noise_img, BATCH_TEST_SIZE)
+        out = torch.chunk(out, BATCH_TEST_SIZE)
+
+        #plt.imshow(noise_img[0].view(28, 28).detach().cpu().numpy())
+        #plt.show()
+
+        grid = make_grid(
+            torch.cat((img[0].view(28, 28), noise_img[0].view(28, 28), out[0].view(28, 28)), 1),
+            nrow=3,
+            padding=100)
+        writer.add_image('test_model_%s' % (ratios), grid, counter)
+        counter = counter + 1
