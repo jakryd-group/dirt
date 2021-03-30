@@ -5,13 +5,8 @@ from torch import sqrt
 import torch.nn as nn
 
 
-
 class AutoEncoder(nn.Module):
-    """ autoencoder class
-        for now only holds:
-            X variable
-            y variable
-    """
+    """ autoencoder class """
 
     def __init__(self, input_shape=45, encoded_shape=3):
         """
