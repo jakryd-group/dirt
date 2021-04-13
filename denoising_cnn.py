@@ -1,17 +1,22 @@
 """ Using Convolutional Neutral Network to denoise text images """
 
-import argparse
-
-import torch
+from torch import randn
+from torch import max
+from torch import cuda
+from torch import chunk
+from torch.nn import MSELoss
+from torch.optim import Adam
 import torchvision
+from torchvision.datasets import MNIST
 from torch.utils.data import random_split
+from torch.utils.data import DataLoader
 
 import matplotlib.pyplot as plt
 import numpy as np
 from six.moves import urllib
 
-from model_cnn import Autoencoder as AE
-
+from Model import AutoencoderCNN as AE
+from Arguments import args
 
 
 # Temporary fix to download the MNIST dataset
@@ -52,31 +57,11 @@ def add_noise(image, noise=0.2, normalize=True):
     adding noise to torch tensors
     this function is used for model train purposes
     """
-    noise = torch.randn(image.size()) * noise
+    noise = randn(image.size()) * noise
     noisy_img = image + noise
     if normalize:
-        noisy_img = noisy_img / torch.max(noisy_img)
+        noisy_img = noisy_img / max(noisy_img)
     return noisy_img
-
-#------------------------------------------------------------------------------
-
-parser = argparse.ArgumentParser(usage='python %(prog)s [options]',
-                                 description='dirt: MNIST denoising using AE')
-parser.add_argument('--n_epochs', type=int, required=False, default=10,
-                    help='number of epochs')
-parser.add_argument('--batch_size', type=int, required=False, default=128,
-                    help='batch size')
-parser.add_argument('--batch_size_test', type=int, required=False, default=10,
-                    help='batch size for testing')
-parser.add_argument('--noise', type=float, required=False, default=0.2,
-                    help='noise level')
-parser.add_argument('--normalize_img', type=bool, required=False, default=True,
-                    help='normalize image with noise')
-parser.add_argument('--learning_rate', type=float, required=False,
-                    default=0.001, help='learning rate')
-parser.add_argument('--verbose', type=bool, required=False, default=True,
-                    help='verbose mode')
-args = parser.parse_args()
 
 #------------------------------------------------------------------------------
 
@@ -84,17 +69,17 @@ transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
 train_dataset = torchvision.datasets.MNIST(root="datasets/", train=True,
                                            transform=transform, download=True)
 train_set, test_set = random_split(train_dataset, (48000, 12000))
-train_loader = torch.utils.data.DataLoader(train_set,
-                                           batch_size=args.batch_size,
-                                           shuffle=True)
-test_loader = torch.utils.data.DataLoader(test_set,
-                                          batch_size=args.batch_size_test,
-                                          shuffle=False)
+train_loader = DataLoader(train_set,
+                            batch_size=args.batch_size,
+                            shuffle=True)
+test_loader = DataLoader(test_set,
+                            batch_size=args.batch_size_test,
+                            shuffle=False)
 
 #------------------------------------------------------------------------------
 
 device = None
-if torch.cuda.is_available():
+if cuda.is_available():
     device = 'cuda'
     if args.verbose:
         print('training on CUDA')
@@ -104,8 +89,8 @@ else:
         print('training on CPU')
 
 AEmodel = AE(input_shape=784).to(device)
-optimizer = torch.optim.Adam(AEmodel.parameters(), lr=args.learning_rate)
-criterion = torch.nn.MSELoss()
+optimizer = Adam(AEmodel.parameters(), lr=args.learning_rate)
+criterion = MSELoss()
 if args.verbose:
     print('training started')
 loss_list = train(AEmodel, train_loader, optimizer, criterion, args.n_epochs)
@@ -146,9 +131,9 @@ for img, _ in test_loader:
     out = out/out.max().item()
     out = out.detach().cpu()
 
-    img = torch.chunk(img, args.batch_size_test)
-    noise_img = torch.chunk(noise_img, args.batch_size_test)
-    out = torch.chunk(out, args.batch_size_test)
+    img = chunk(img, args.batch_size_test)
+    noise_img = chunk(noise_img, args.batch_size_test)
+    out = chunk(out, args.batch_size_test)
 
     #plt.imshow(noise_img[0].view(28, 28).detach().cpu().numpy())
     #plt.show()

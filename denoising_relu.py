@@ -10,10 +10,11 @@ from torch.utils.data import random_split
 from tensorboardX import SummaryWriter
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-from base import AutoEncoder
+from Model import AutoEncoderRelu
 from Misc import plot_to_image
 from Misc import image_to_tensor
 from Misc import create_plot_grid
+import numpy as np
 
 def add_noise(image, noise=0.2, normalize=True):
     """
@@ -48,11 +49,11 @@ test_loader = torch.utils.data.DataLoader(
 
 writer = SummaryWriter(
     'runs/%s; %d; %d' \
-    % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S dn tanh"), BATCH_SIZE, EPOCHS))
+    % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S dn relu"), BATCH_SIZE, EPOCHS))
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-AEmodel = AutoEncoder(input_shape=784, encoded_shape=10).to(device)
+AEmodel = AutoEncoderRelu(input_shape=784, encoded_shape=10).to(device)
 optimizer = torch.optim.Adam(AEmodel.parameters(), lr=0.001, weight_decay=1e-7)
 criterion = torch.nn.MSELoss()
 
@@ -67,6 +68,7 @@ def train(model, data_train, optim, loss_fn, epochs):
         for inputs, _ in data_train:
             # reshape inputs
             inputs = inputs.view(-1, 784)
+            inputs = np.clip(inputs, 0, 1)
             # add some noise
             noise_img_train = add_noise(inputs)
             # reset gradients

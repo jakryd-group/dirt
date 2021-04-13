@@ -6,7 +6,7 @@ python -m pip install -r requirements.txt
 
 ## HOW TO RUN TENSORBOARD
 
-tensorboard --logdir=runs
+tensorboard --logdir=runs --samples_per_plugin images=20
 
 ## HOW TO MONITOR NVIDIA GPU
 
