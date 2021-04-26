@@ -1,5 +1,8 @@
 import io
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+from matplotlib.cm import binary
 import numpy as np
 from PIL import Image
 from torchvision import transforms
@@ -35,14 +38,18 @@ def create_plot_grid(*arg, names=['raw', 'noise', 'denoised']):
     """ Takes raw and dirty images and """
     count = len(arg)
     
-    fig = plt.figure()
+    fig = plt.figure(figsize=(14, 6))
+    
 
     for idx, img in enumerate(arg):
         tmp = img.numpy()
+
+        norm = Normalize(vmin=0., vmax=1.)
         
         ax = fig.add_subplot(1, count, idx + 1)
         ax.set_title(names[idx])
         ax.set_axis_off()
-        plt.imshow(tmp, cmap=plt.cm.binary)
+        plt.subplots_adjust(left=0.01, bottom=0.01, right=1, top=1, wspace=0.05, hspace=0.1)
+        plt.imshow(tmp, cmap=plt.cm.gray)#, norm=norm)
     
     return fig

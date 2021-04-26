@@ -14,16 +14,21 @@ from Arguments import args
 import numpy as np
 
 
-
 def get_data(path):
     images = []
+    dimensions = (540, 420)
     for image in os.listdir(path):
         image = Image.open(os.path.join(path, image))
         image.load()
-        image.thumbnail((256, 256))
+        
+        width, height = image.size
+        w_padding = int((dimensions[0] - width) / 2)
+        h_padding = int((dimensions[1] - height) / 2)
 
+        tmp = Image.new('L', dimensions, 255)
+        tmp.paste(image, (w_padding, h_padding))
        
-        images.append(image) 
+        images.append(tmp)
 
     return images
 
@@ -34,12 +39,13 @@ def train(model, data_train, optim, loss_fn, n_epochs):
 
     for epoch in range(n_epochs):
         loss = 0
-        for inputs, _ in data_train:
-            noise_img_train = add_noise(inputs)
+        for dirt, clean in data_train:
+            dirt = torch.autograd.Variable(dirt, requires_grad=True).cuda()
+            clean = torch.autograd.Variable(clean, requires_grad=True).cuda()
             optim.zero_grad()
             model.to(device)
-            outputs = model(noise_img_train.to(device))
-            train_loss = loss_fn(outputs.to(device), inputs.to(device))
+            outputs = model(dirt.to(device))
+            train_loss = loss_fn(outputs.to(device), clean.to(device))
             train_loss.backward()
             optim.step()
             loss += train_loss.item()
@@ -48,15 +54,17 @@ def train(model, data_train, optim, loss_fn, n_epochs):
         loss_list_result.append(loss)
 
         print('Epoch {} of {}, loss={:.3}'.format(epoch+1, args.n_epochs, loss))
+        writer.add_scalar('train/Epoch loss', loss, epoch)
+        writer.flush()
     return loss_list_result
 
 #------------------------------------------------------------------------------
 
 # prepare the dataset and the dataloader
 class ImageData(Dataset):
-    def __init__(self, images, labels=None, transforms=None):
-        self.X = images
-        self.y = labels
+    def __init__(self, dirty, cleaned=None, transforms=None):
+        self.X = dirty
+        self.y = cleaned
         self.transforms = transforms
          
     def __len__(self):
@@ -64,24 +72,18 @@ class ImageData(Dataset):
     
     def __getitem__(self, i):
         data = self.X[i]
-        data = np.asarray(data).astype(np.uint8).reshape((256, 256, 3))
+        data = np.asarray(data).astype(np.uint8)
         
         if self.transforms:
             data = self.transforms(data)
             
         if self.y is not None:
             labels = self.y[i]
-            labels = np.asarray(labels).astype(np.uint8).reshape((256, 256, 3))
+            labels = np.asarray(labels).astype(np.uint8)
             labels = self.transforms(labels)
             return (data, labels)
         else:
             return data
-
-
-#------------------------------------------------------------------------------
-
-EPOCHS = 1
-BATCH_SIZE = 2
 
 #------------------------------------------------------------------------------
 
@@ -94,14 +96,14 @@ test_images = get_data('./Dirty-Documents/test')
 train_data = ImageData(train_images, train_clean, transform)
 test_data = ImageData(test_images, None, transform)
 
-train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
-test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=True)
+train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
+test_loader = DataLoader(test_data, batch_size=args.batch_size_test, shuffle=True)
 
 #------------------------------------------------------------------------------
 
 writer = SummaryWriter(
     'runs/%s; %d; %d' \
-    % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S docs cnn"), BATCH_SIZE, EPOCHS))
+    % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S docs cnn"), args.batch_size, args.n_epochs))
 
 #------------------------------------------------------------------------------
 
@@ -118,7 +120,7 @@ else:
 #------------------------------------------------------------------------------
 
 AEmodel = AutoencoderCNN().to(device)
-optimizer = torch.optim.Adam(AEmodel.parameters(), lr=0.001, weight_decay=1e-7)
+optimizer = torch.optim.Adam(AEmodel.parameters(), weight_decay=args.weight_decay, lr=args.learning_rate)
 criterion = torch.nn.MSELoss()
 
 if args.verbose:
@@ -130,44 +132,32 @@ if args.verbose:
 #------------------------------------------------------------------------------
 
 # Check if AE works on a random test data
-rnd = np.random.randint(len(test_set))
+rnd = np.random.randint(len(test_loader))
 
 # Disable AEmodel train mode
 AEmodel.eval()
 
+counter = 0
 
-for img, _ in test_loader:
-    img = img.view(-1, 784)
-    noise_img = add_noise(img, noise=ratios)
-
+for dirty in test_loader:
     if counter == 0:
-        writer.add_graph(AEmodel, noise_img.to(device))
+        writer.add_graph(AEmodel, dirty.to(device))
 
-    out = AEmodel(noise_img.to(device))
+    out = AEmodel(dirty.to(device))
     out = out/out.max().item()
     out = out.detach().cpu()
 
-    img = torch.chunk(img, BATCH_TEST_SIZE)
-    noise_img = torch.chunk(noise_img, BATCH_TEST_SIZE)
-    out = torch.chunk(out, BATCH_TEST_SIZE)
+    dirty = torch.chunk(dirty, args.batch_size_test)
+    out = torch.chunk(out, args.batch_size_test)
 
-    #plt.imshow(noise_img[0].view(28, 28).detach().cpu().numpy())
-    #plt.show()
-
-    #grid = make_grid(
-    #    torch.cat((img[0].view(28, 28), noise_img[0].view(28, 28), out[0].view(28, 28)), 1),
-    #    nrow=3,
-    #    padding=100)
-    #writer.add_image('test_model_%s' % (ratios), grid, counter)
     writer.add_image(
         'test_model',
         image_to_tensor(
             plot_to_image(
                 create_plot_grid(
-                    img[0].view(28, 28),
-                    noise_img[0].view(28, 28),
-                    out[0].view(28, 28),
-                    names=['raw', 'noise %s' % (ratios), 'denoised']
+                    dirty[0].view(-1, *dirty[0].size()[2:]).permute(1, 2, 0),
+                    out[0].view(-1, *out[0].size()[2:]).permute(1, 2, 0),
+                    names=['dirty', 'denoised']
                 )
             )
         ),

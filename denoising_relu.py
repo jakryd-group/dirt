@@ -38,7 +38,8 @@ train_set, test_set = random_split(train_dataset, (48000, 12000))
 BATCH_SIZE = 1000
 BATCH_TEST_SIZE = 1000
 EPOCHS = 25
-NOISE_RATIO = [0.0, 0.05, 0.2, 0.5, 1.0]
+#NOISE_RATIO = [0.0, 0.05, 0.2, 0.5, 1.0]
+NOISE_RATIO = [0.2]
 
 train_loader = torch.utils.data.DataLoader(
     train_set, batch_size=BATCH_SIZE, shuffle=True)
@@ -53,8 +54,8 @@ writer = SummaryWriter(
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-AEmodel = AutoEncoderRelu(input_shape=784, encoded_shape=10).to(device)
-optimizer = torch.optim.Adam(AEmodel.parameters(), lr=0.001, weight_decay=1e-7)
+AEmodel = AutoEncoderRelu().to(device)
+optimizer = torch.optim.Adam(AEmodel.parameters(), lr=0.001)#, weight_decay=1e-7)
 criterion = torch.nn.MSELoss()
 
 
@@ -62,15 +63,19 @@ def train(model, data_train, optim, loss_fn, epochs):
     """
     train function
     """
+    constraintHigh=1
+    constraintLow=0
+
     loss_list_result = []
     for epoch in range(epochs):
         loss = 0
         for inputs, _ in data_train:
             # reshape inputs
             inputs = inputs.view(-1, 784)
-            inputs = np.clip(inputs, 0, 1)
+            #inputs = np.clip(inputs, 0, 1)
             # add some noise
             noise_img_train = add_noise(inputs)
+            #noise_img = np.clip(noise_img, 0, 1)
             # reset gradients
             optim.zero_grad()
             # move model (ie. net) to appropiate device
@@ -83,6 +88,9 @@ def train(model, data_train, optim, loss_fn, epochs):
             train_loss.backward()
             # update parameters based on current gradients
             optim.step()
+
+            model.encode_1.weight=torch.nn.Parameter(constraintLow + (constraintHigh-constraintLow)*(model.encode_1.weight - torch.min(model.encode_1.weight))/(torch.max(model.encode_1.weight) - torch.min(model.encode_1.weight)))
+
             #a dd the batch training loss to epoch loss
             loss += train_loss.item()
         # compute the epoch training loss
@@ -94,9 +102,9 @@ def train(model, data_train, optim, loss_fn, epochs):
             print('Epoch {} of {}, loss={:.3}'.format(epoch+1, epochs, loss))
         writer.add_scalar('train/Epoch loss', loss, epoch)
 
-        for name, weight in model.named_parameters():
-            writer.add_histogram(name,weight, epoch)
-            writer.add_histogram(f'{name}.grad',weight.grad, epoch)
+        #for name, weight in model.named_parameters():
+        #    writer.add_histogram(name,weight, epoch)
+        #    writer.add_histogram(f'{name}.grad',weight.grad, epoch)
 
         writer.flush()
     return loss_list_result
@@ -137,7 +145,7 @@ for ratios in NOISE_RATIO:
                     create_plot_grid(
                         img[0].view(28, 28),
                         noise_img[0].view(28, 28),
-                        out[0].view(28, 28),
+                        np.clip(out[0].view(28, 28), 0., 1.),
                         names=['raw', 'noise %s' % (ratios), 'denoised']
                     )
                 )
