@@ -1,8 +1,13 @@
-### HOW TO INSTALL PYTHON DEPENDENCIES
-<pre>python -m pip install -r requirements.txt</pre>
+# AutoEncoder
 
-### HOW TO RUN TENSORBOARD
-<pre>tensorboard --logdir=runs</pre>
+## HOW TO INSTALL PYTHON DEPENDENCIES
 
-### HOW TO MONITOR NVIDIA GPU
-<pre>nvidia-smi -lms 500</pre>
+python -m pip install -r requirements.txt
+
+## HOW TO RUN TENSORBOARD
+
+tensorboard --logdir=runs --samples_per_plugin images=20
+
+## HOW TO MONITOR NVIDIA GPU
+
+nvidia-smi -lms 500
