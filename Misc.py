@@ -1,3 +1,6 @@
+# -*- coding: utf-8 -*-
+""" This module contains usefull functions """
+
 import io
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
@@ -6,7 +9,10 @@ from matplotlib.cm import binary
 import numpy as np
 from PIL import Image
 from torchvision import transforms
+from torch import randn
+from torch import max as tmax
 
+#------------------------------------------------------------------------------
 
 def plot_to_image(figure):
     """ Converts the matplotlib plot specified by 'figure' to a PNG image and
@@ -27,12 +33,14 @@ def plot_to_image(figure):
 
     return image
 
+#------------------------------------------------------------------------------
 
 def image_to_tensor(image):
     """ Converts image to pytorch tensor and returns it. """
     transf = transforms.Compose([transforms.ToTensor()])
     return transf(image)
 
+#------------------------------------------------------------------------------
 
 def create_plot_grid(*arg, names=['raw', 'noise', 'denoised']):
     """ Takes raw and dirty images and """
@@ -53,3 +61,15 @@ def create_plot_grid(*arg, names=['raw', 'noise', 'denoised']):
         plt.imshow(tmp, cmap=plt.cm.gray)#, norm=norm)
     
     return fig
+
+#------------------------------------------------------------------------------
+
+def add_noise(image, noise, normalize):
+    """
+    Add noise to image
+    """
+    noise = randn(image.size()) * noise
+    noisy_img = image + noise
+    if normalize:
+        noisy_img = noisy_img / tmax(noisy_img)
+    return noisy_img

@@ -1,155 +1,184 @@
-"""
-Próba wykorzystania klasy AutEncoder do odszumienia MNIST
-"""
+# -*- coding: utf-8 -*-
+""" Denoise MNIST dataset using RELU activation layer """
+
 import datetime
-import torchvision
-from torchvision import transforms
-from torchvision.utils import make_grid
+import numpy as np
 import torch
+import torchvision
 from torch.utils.data import random_split
 from tensorboardX import SummaryWriter
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-from Model import AutoEncoderRelu
-from Misc import plot_to_image
-from Misc import image_to_tensor
+
+from Arguments import parser
+from Misc import add_noise
 from Misc import create_plot_grid
-import numpy as np
+from Misc import image_to_tensor
+from Misc import plot_to_image
+from Model import AutoEncoderRelu
 
-def add_noise(image, noise=0.2, normalize=True):
-    """
-    dodajemy szum do obrazów w celu uczenia
-    """
-    noise = torch.randn(image.size()) * noise
-    noisy_img = image + noise
-    if normalize:
-        noisy_img = noisy_img / torch.max(noisy_img)
-    return noisy_img
+#------------------------------------------------------------------------------
 
-
-transform = transforms.Compose([transforms.ToTensor()])
-
-train_dataset = torchvision.datasets.MNIST(
-    root="torch_datasets/", train=True, transform=transform)
-
-train_set, test_set = random_split(train_dataset, (48000, 12000))
-
-
-BATCH_SIZE = 1000
-BATCH_TEST_SIZE = 1000
-EPOCHS = 25
-#NOISE_RATIO = [0.0, 0.05, 0.2, 0.5, 1.0]
-NOISE_RATIO = [0.2]
-
-train_loader = torch.utils.data.DataLoader(
-    train_set, batch_size=BATCH_SIZE, shuffle=True)
-
-test_loader = torch.utils.data.DataLoader(
-    test_set, batch_size=BATCH_TEST_SIZE, shuffle=False)
-
-
-writer = SummaryWriter(
-    'runs/%s; %d; %d' \
-    % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S dn relu"), BATCH_SIZE, EPOCHS))
-
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-AEmodel = AutoEncoderRelu().to(device)
-optimizer = torch.optim.Adam(AEmodel.parameters(), lr=0.001)#, weight_decay=1e-7)
-criterion = torch.nn.MSELoss()
-
-
-def train(model, data_train, optim, loss_fn, epochs):
+def train(model, data_train, optim, loss_fn, epochs, noise, norm):
     """
     train function
     """
-    constraintHigh=1
-    constraintLow=0
-
     loss_list_result = []
     for epoch in range(epochs):
         loss = 0
         for inputs, _ in data_train:
             # reshape inputs
             inputs = inputs.view(-1, 784)
-            #inputs = np.clip(inputs, 0, 1)
-            # add some noise
-            noise_img_train = add_noise(inputs)
-            #noise_img = np.clip(noise_img, 0, 1)
+            # add noise
+            noise_img = add_noise(inputs, noise=noise, normalize=norm)
             # reset gradients
             optim.zero_grad()
             # move model (ie. net) to appropiate device
             model.to(device)
             # compute reconstructions
-            outputs = model(noise_img_train.to(device))
+            outputs = model(noise_img.to(device))
             # compute a training reconstruction loss
             train_loss = loss_fn(outputs.to(device), inputs.to(device))
             # compute accumulated gradients
             train_loss.backward()
             # update parameters based on current gradients
             optim.step()
-
-            model.encode_1.weight=torch.nn.Parameter(constraintLow + (constraintHigh-constraintLow)*(model.encode_1.weight - torch.min(model.encode_1.weight))/(torch.max(model.encode_1.weight) - torch.min(model.encode_1.weight)))
-
-            #a dd the batch training loss to epoch loss
+            #add the batch training loss to epoch loss
             loss += train_loss.item()
         # compute the epoch training loss
         loss = loss/len(data_train)
-        # loss = loss/len(NOISE_RATIO)
+        # and add it to results list
         loss_list_result.append(loss)
-        # print info every 10th epoch
-        if epoch%10 == 0:
+
+        # print info every epoch
+        if args.verbose and not args.suppress:
             print('Epoch {} of {}, loss={:.3}'.format(epoch+1, epochs, loss))
-        writer.add_scalar('train/Epoch loss', loss, epoch)
+        else:
+            # print info every 10th epoch
+            if epoch%10 == 0 and not args.suppress:
+                print('Epoch {} of {}, loss={:.3}'.format(epoch+1, epochs, loss))
 
-        #for name, weight in model.named_parameters():
-        #    writer.add_histogram(name,weight, epoch)
-        #    writer.add_histogram(f'{name}.grad',weight.grad, epoch)
+        # store training progress in tensorboard if requested
+        if args.tensorboard:
+            writer.add_scalar('train/Epoch loss', loss, epoch)
+            writer.flush()
 
-        writer.flush()
     return loss_list_result
 
+#------------------------------------------------------------------------------
 
-loss_list = train(AEmodel, train_loader, optimizer, criterion, EPOCHS)
+def test(model, test_data, noise, normalize):
+    """
+    test function
+    """
+    count = 0
 
-counter = 0
-
-for ratios in NOISE_RATIO:
-    for img, _ in test_loader:
+    for img, _ in test_data:
         img = img.view(-1, 784)
-        noise_img = add_noise(img, noise=ratios)
+        noise_img = add_noise(img, noise=noise, normalize=normalize)
 
-        if counter == 0:
-            writer.add_graph(AEmodel, noise_img.to(device))
-
-        out = AEmodel(noise_img.to(device))
+        out = model(noise_img.to(device))
         out = out/out.max().item()
         out = out.detach().cpu()
 
-        img = torch.chunk(img, BATCH_TEST_SIZE)
-        noise_img = torch.chunk(noise_img, BATCH_TEST_SIZE)
-        out = torch.chunk(out, BATCH_TEST_SIZE)
+        img = torch.chunk(img, args.batch_size_test)
+        noise_img = torch.chunk(noise_img, args.batch_size_test)
+        out = torch.chunk(out, args.batch_size_test)
 
-        #plt.imshow(noise_img[0].view(28, 28).detach().cpu().numpy())
-        #plt.show()
+        # store training progress in tensorboard if requested
+        if args.tensorboard:
+            writer.add_image(
+                'test_model',
+                image_to_tensor(
+                    plot_to_image(
+                        create_plot_grid(
+                            img[0].view(28, 28),
+                            noise_img[0].view(28, 28),
+                            np.clip(out[0].view(28, 28), 0., 1.),
+                            names=['raw', 'noise %s' % noise, 'denoised']))),
+                count)
 
-        #grid = make_grid(
-        #    torch.cat((img[0].view(28, 28), noise_img[0].view(28, 28), out[0].view(28, 28)), 1),
-        #    nrow=3,
-        #    padding=100)
-        #writer.add_image('test_model_%s' % (ratios), grid, counter)
-        writer.add_image(
-            'test_model',
-            image_to_tensor(
-                plot_to_image(
-                    create_plot_grid(
-                        img[0].view(28, 28),
-                        noise_img[0].view(28, 28),
-                        np.clip(out[0].view(28, 28), 0., 1.),
-                        names=['raw', 'noise %s' % (ratios), 'denoised']
-                    )
-                )
-            ),
-            counter)
+        count = count + 1
 
-        counter = counter + 1
+#------------------------------------------------------------------------------
+
+# set default parameters
+args = parser(desc='Denoise MNIST dataset using RELU activation layer',
+              n_epochs=10,
+              batch_size=1000,
+              batch_test_size=1000)
+
+#------------------------------------------------------------------------------
+
+# prepare dataset
+transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
+
+train_dataset = torchvision.datasets.MNIST(
+    root="torch_datasets/", train=True, transform=transform)
+
+train_set, test_set = random_split(train_dataset, (48000, 12000))
+
+train_loader = torch.utils.data.DataLoader(
+    train_set, batch_size=args.batch_size, shuffle=True)
+
+test_loader = torch.utils.data.DataLoader(
+    test_set, batch_size=args.batch_size_test, shuffle=False)
+
+#------------------------------------------------------------------------------
+
+# store training progress if needed
+if args.tensorboard:
+    writer = SummaryWriter(
+        'runs/%s; %d; %d' \
+        % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S dn relu"),
+            args.batch_size, args.n_epochs))
+
+#------------------------------------------------------------------------------
+
+# find out if CUDA capable GPU is present
+device = None
+if torch.cuda.is_available():
+    device = 'cuda'
+    if args.verbose and not args.suppress:
+        print('training on CUDA')
+else:
+    device = 'cpu'
+    if args.verbose and not args.suppress:
+        print('training on CPU')
+
+#------------------------------------------------------------------------------
+
+# declare model, loss function
+AEmodel = AutoEncoderRelu().to(device)
+optimizer = torch.optim.Adam(
+    AEmodel.parameters(),
+    lr=args.learning_rate,
+    weight_decay=args.weight_decay)
+criterion = torch.nn.MSELoss()
+
+#------------------------------------------------------------------------------
+
+# training
+if args.verbose and not args.suppress:
+    print('training started')
+
+loss_list = train(AEmodel,
+                  train_loader,
+                  optimizer,
+                  criterion,
+                  args.n_epochs,
+                  args.noise,
+                  args.normalize_img)
+
+if args.verbose and not args.suppress:
+    print('training ended')
+
+#------------------------------------------------------------------------------
+
+# set model into evaluation mode
+AEmodel.eval()
+
+# testing
+if args.verbose and not args.suppress:
+    print('testing started')
+test(AEmodel, test_loader, args.noise, args.normalize_img)
+if args.verbose and not args.suppress:
+    print('testing ended')
