@@ -3,8 +3,10 @@
 
 import datetime
 import numpy as np
+from PIL import Image
 import torch
 import torchvision
+import matplotlib.pyplot as plt
 from six.moves import urllib
 from torch.utils.data import DataLoader
 from torch.utils.data import random_split
@@ -15,14 +17,13 @@ from Misc import add_noise
 from Misc import create_plot_grid
 from Misc import image_to_tensor
 from Misc import plot_to_image
+from Misc import summary_grid
 from Model import AutoEncoderCNN
 
 #------------------------------------------------------------------------------
 
 def train(model, data_train, optim, loss_fn, epochs, noise, norm):
-    """
-    train function
-    """
+    """ train function """
     loss_list_result = []
     for epoch in range(epochs):
         loss = 0
@@ -66,9 +67,7 @@ def train(model, data_train, optim, loss_fn, epochs, noise, norm):
 #------------------------------------------------------------------------------
 
 def test(model, test_data, noise, normalize):
-    """
-    test function
-    """
+    """ test function """
     count = 0
 
     for img, _ in test_data:
@@ -94,6 +93,24 @@ def test(model, test_data, noise, normalize):
                             np.clip(out[0].view(28, 28), 0., 1.),
                             names=['raw', 'noise %s' % noise, 'denoised']))),
                 count)
+
+        # display summary
+        if count == 0:
+            dims = (1400, 600)
+            summary = Image.new('L', (dims[0], 5 * dims[1]), 255)
+            i = 0
+            while i < 5:
+                tmp_img = plot_to_image(
+                            create_plot_grid(
+                                img[i].view(28, 28),
+                                noise_img[i].view(28, 28),
+                                out[i].view(28, 28),
+                                names=None))
+                summary.paste(tmp_img, (0, i*dims[1]))
+                i += 1
+
+            plt.imshow(summary, cmap=plt.cm.gray)
+            plt.show()
 
         count = count + 1
 
@@ -178,7 +195,7 @@ if args.verbose and not args.suppress:
 
 #------------------------------------------------------------------------------
 
-# Disable AEmodel train mode
+# disable AEmodel train mode
 AEmodel.eval()
 
 # testing

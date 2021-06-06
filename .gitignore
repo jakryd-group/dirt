@@ -12,3 +12,4 @@ torch_datasets/MNIST/raw/*
 runs/*
 *.pt
 datasets/MNIST/raw/*
+.rcfile

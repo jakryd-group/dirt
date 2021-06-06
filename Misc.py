@@ -47,6 +47,7 @@ def create_plot_grid(*arg, names=['raw', 'noise', 'denoised']):
     count = len(arg)
     
     fig = plt.figure(figsize=(14, 6))
+    fig.tight_layout()
     
 
     for idx, img in enumerate(arg):
@@ -55,9 +56,10 @@ def create_plot_grid(*arg, names=['raw', 'noise', 'denoised']):
         norm = Normalize(vmin=0., vmax=1.)
         
         ax = fig.add_subplot(1, count, idx + 1)
-        ax.set_title(names[idx])
+        if names is not None:
+            ax.set_title(names[idx])
         ax.set_axis_off()
-        plt.subplots_adjust(left=0.01, bottom=0.01, right=1, top=1, wspace=0.05, hspace=0.1)
+        #plt.subplots_adjust(left=0.05, bottom=0.01, right=0.95, top=0.99, wspace=0.01, hspace=0.01)
         plt.imshow(tmp, cmap=plt.cm.gray)#, norm=norm)
     
     return fig
@@ -73,3 +75,13 @@ def add_noise(image, noise, normalize):
     if normalize:
         noisy_img = noisy_img / tmax(noisy_img)
     return noisy_img
+
+#------------------------------------------------------------------------------
+
+def summary_grid(dirty, cleaned, noise=None):
+    """
+    Create summary image showing comparision between
+    raw dataset and clened data
+    noise input data can be also added
+    """
+
